@@ -1,2 +1,4 @@
+
 #include "Config.h"
-QSettings g_Settings("TcpServerConfig.ini", QSettings::IniFormat);
+
+QSettings g_Settings("sw.ini", QSettings::IniFormat);

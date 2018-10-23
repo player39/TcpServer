@@ -7,10 +7,10 @@ FIND_PACKAGE(Qt5Widgets)
 FIND_PACKAGE(Qt5Core)
 FIND_PACKAGE(Qt5Gui)
 FIND_PACKAGE(Qt5Network)
-file(GLOB UI_FILES ${PROJECT_SOURCE_DIR}/*.ui)
-qt5_wrap_ui(WRAP_FILES ${UI_FILES})
+file(GLOB UI_Files *.ui)
 file(GLOB Header_Files *.h)
 file(GLOB CPP_Files *.cpp)
+qt5_wrap_ui(WRAP_FILES ${UI_Files})
 INCLUDE_DIRECTORIES(
 ${Qt5Widgets_INCLUDE_DIRS}
 ${Qt5Core_INCLUDE_DIRS}

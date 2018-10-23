@@ -1,167 +1,217 @@
+
 #include "uiSingleServerWidget.h"
+#include <QtCore/QTimer>
+#include "Config.h"
 
-uiSingleServerWidget::uiSingleServerWidget(int widgetNum, QWidget* parent) :QWidget(parent)
+uiSingleServerWidget::uiSingleServerWidget(QWidget* parent /* = Q_NULLPTR */)
+  : QWidget(parent)
 {
-  m_pServer = new QTcpServer(this);
-  m_pTimer = new QTimer(this);
-  m_iWidgetNum = widgetNum;
   ui.setupUi(this);
-  connect(ui.checkBox_Server, &QCheckBox::stateChanged, this, &uiSingleServerWidget::slotOpenSystem);
-  connect(ui.checkBox_Server, &QCheckBox::stateChanged, this, &uiSingleServerWidget::slotReadSendDataFromText);
-  //connect(m_pTimer, &QTimer::timeout, this, &uiSingleServerWidget::slotCloseServer);
-  //m_pTimer->start(200);
+
+  m_pTcpServer = new QTcpServer(this);
+  m_pTimer = new QTimer(this);
+  m_pSocketTimer = new QTimer(this);
+  m_pSocketTimer->start(200);
+
+  connect(m_pTimer, &QTimer::timeout, this, &uiSingleServerWidget::slotTimeout);
+  connect(ui.checkBox, &QCheckBox::stateChanged, this, &uiSingleServerWidget::slotStateChanged);
+  connect(m_pTcpServer, &QTcpServer::newConnection, this, &uiSingleServerWidget::slotNewClient);
+  connect(m_pSocketTimer, &QTimer::timeout, this, &uiSingleServerWidget::slotSendData);
 }
 
-void uiSingleServerWidget::slotOpenSystem()
+uiSingleServerWidget::~uiSingleServerWidget()
 {
-  if(ui.checkBox_Server->isChecked())
-  {
-    writeConfig();
-    m_iPort = ui.spinBox_port->value();
-    int _time = ui.spinBox_Timeout->value();
-    connect(m_pTimer, &QTimer::timeout, this, &uiSingleServerWidget::slotOpenOrCloseServer);
-    m_pTimer->start(_time);
-  }
-  else
-  {
-    m_pTimer->stop();
-    disconnect(m_pTimer, &QTimer::timeout, this, &uiSingleServerWidget::slotOpenOrCloseServer);
-    if (m_pServer&&m_pServer->isListening())
-    {
-      for (int i = 0; i < m_vSocketGroup.length(); ++i)
-      {
-        if (m_vSocketGroup[i]->isOpen())
-        {
-          m_vSocketGroup[i]->close();
-          --i;
-        }
-      }
-      m_pServer->close();
-      disconnect(m_pServer, &QTcpServer::newConnection, this, &uiSingleServerWidget::slotNewClient);
-    }
-  }
+
 }
 
-void uiSingleServerWidget::slotReadSendDataFromText()
+void uiSingleServerWidget::initWidget(int iID)
 {
-    m_sFileAddress = ui.lineEdit_FileAddr->text();
-    qDebug() << m_sFileAddress;
-    QFile* _textFile = new QFile(m_sFileAddress);
-    if (_textFile->open(QIODevice::ReadWrite | QIODevice::Text))
-    {
-      QTextStream in(_textFile);
-      QString _Line = in.readLine();
-      QString _temData = "";
-      while (!_Line.isNull())
-      {
-        _temData.append(_Line);
-        _Line = in.readLine();
-      }
-      m_slSendData = _temData.split("|");
-    }
-}
+  m_iWidgetID = iID;
+  char sName[100] = "";
+  sprintf(sName, "Server%d", iID);
+  ui.checkBox->setText(sName);
 
-void uiSingleServerWidget::slotOpenServer(int port)
-{
-  
-}
+  g_Settings.beginGroup(sName);
 
-void uiSingleServerWidget::slotOpenOrCloseServer()
-{
-  if (m_pServer&&m_pServer->isListening())
-  {
-    for (int i = 0; i < m_vSocketGroup.length(); ++i)
-    {
-      if (m_vSocketGroup[i]->isOpen())
-      {
-        m_vSocketGroup[i]->close();
-        --i;
-      }
-    }
-    m_pServer->close();
-    disconnect(m_pServer, &QTcpServer::newConnection, this, &uiSingleServerWidget::slotNewClient);
-  }
-  else
-  {
-    if (m_pServer->listen(QHostAddress::Any, m_iPort))
-    {
-      qDebug() << "ServerStart" << m_iPort;
-    }
-    connect(m_pServer, &QTcpServer::newConnection, this, &uiSingleServerWidget::slotNewClient);
-  }
-}
-
-void uiSingleServerWidget::writeConfig()
-{
-//  _settings.setValue()
-  g_Settings.beginGroup(QString("Server") + QString::number(m_iWidgetNum, 10));
-  g_Settings.setValue("Port", ui.spinBox_port->value());
-  g_Settings.setValue("Address", ui.lineEdit_FileAddr->text());
-  g_Settings.setValue("Time", ui.spinBox_Timeout->value());
-  g_Settings.endGroup();
-}
-
-void uiSingleServerWidget::initData()
-{
-  g_Settings.beginGroup(QString("Server") + QString::number(m_iWidgetNum, 10));
   QString strPort = "Port";
   if (g_Settings.value(strPort).isNull())
     g_Settings.setValue(strPort, 8080);
-  ui.spinBox_port->setValue(g_Settings.value("Port").toInt());
-  QString strTime = "Time";
-  if (g_Settings.value(strTime).isNull())
-    g_Settings.setValue(strTime, 60000);
-  ui.spinBox_Timeout->setValue(g_Settings.value("Time").toInt());
+  ui.spinBox_Port->setValue(g_Settings.value(strPort).toInt());
+
+  QString strTimeout = "Timeout";
+  if (g_Settings.value(strTimeout).isNull())
+    g_Settings.setValue(strTimeout, 3000);
+  ui.spinBox_Timeout->setValue(g_Settings.value(strTimeout).toInt());
+
+  QString strEnable = "Enable";
+  if (g_Settings.value(strEnable).isNull())
+    g_Settings.setValue(strEnable, "False");
+  ui.checkBox->setChecked(g_Settings.value(strEnable).toBool());
+
   QString strAddress = "Address";
   if (g_Settings.value(strAddress).isNull())
-    g_Settings.setValue(strAddress, "/");
-  ui.lineEdit_FileAddr->setText(g_Settings.value("Address").toString());
+    g_Settings.setValue(strAddress, "");
+  ui.lineEdit_Address->setText(g_Settings.value(strAddress).toString());
+
   g_Settings.endGroup();
+
+  if (ui.checkBox->isChecked())
+    readDataFromTxt();
 }
 
-void uiSingleServerWidget::slotNewClient()
+std::string uiSingleServerWidget::creatSum(const QString& strSendData)
 {
-  m_vSocketGroup.append(m_pServer->nextPendingConnection());
-  m_vTimerGroup.append(new QTimer(this));
-  connect(m_vSocketGroup.last(), &QTcpSocket::disconnected, this, &uiSingleServerWidget::slotDisconnection);
-  connect(m_vSocketGroup.last(), &QTcpSocket::disconnected, m_vSocketGroup.last(), &QTcpSocket::deleteLater);
-  connect(m_vTimerGroup.last(), &QTimer::timeout, this, &uiSingleServerWidget::slotSendData);
-  m_vTimerGroup.last()->start(200);
+  int iResult = strSendData[1].unicode();
+  for (int i = 2; strSendData[i] != '*'; ++i)
+  {
+    if(strSendData[i] == ']' || strSendData[i] == '$')
+      continue;
+    iResult ^= strSendData[i].unicode();
+  }
+  char sTemResult[10];
+  sprintf(sTemResult, "%X", iResult);
+  std::string sResult = sTemResult;
+  return sResult;
 }
 
-void uiSingleServerWidget::slotDisconnection()
+void uiSingleServerWidget::slotTimeout()
 {
-  QTcpSocket* pTemSocket = qobject_cast<QTcpSocket*>(sender());
-  int _index = m_vSocketGroup.indexOf(pTemSocket);
-  m_vTimerGroup[_index]->stop();
-  m_vTimerGroup.remove(_index);
-  m_vSocketGroup.removeOne(pTemSocket);
+  if (m_pTcpServer->isListening())
+  {
+    closeSocket();
+    m_pTcpServer->close();
+    ui.checkBox->setStyleSheet("color : red");
+    //发送数据在QStringList中的下标清零
+    m_iSendDataNum = 0;
+  }
+  else
+  {
+    m_pTcpServer->listen(QHostAddress::Any, ui.spinBox_Port->value());
+    ui.checkBox->setStyleSheet("color : green");
+  }
+}
+
+void uiSingleServerWidget::slotStateChanged(int iValue)
+{
+  writeConfig();
+
+  if (ui.checkBox->isChecked())
+  {
+    readDataFromTxt();
+    m_pTimer->start(ui.spinBox_Timeout->value());
+  }
+  else
+  {
+    if (m_pTcpServer->isListening())
+    {
+      closeSocket();
+      m_pTcpServer->close();
+      ui.checkBox->setStyleSheet("color : red");
+    }
+    m_pTimer->stop();
+  }
 }
 
 void uiSingleServerWidget::slotSendData()
 {
-  QTimer* pTimer = qobject_cast<QTimer*>(sender());
-  int _index = m_vTimerGroup.indexOf(pTimer);
-  if (m_vSocketGroup[_index]->isOpen())
+  for (pSocketItr itr = m_vSocketGroup.begin(); itr != m_vSocketGroup.end(); ++itr)
   {
-    if (m_iflag < m_slSendData.length())
+    if(m_sSendDataGroup.length())
+      m_strSendData = QString::fromStdString(m_sSendDataGroup).split('|');
+
+    if ((*itr)->isOpen())
     {
-      QDateTime nowtime = QDateTime::currentDateTime();
-      QString nowTime = nowtime.toString("hhmmss.zzzz");
-      //     m_sendData[i].replace(12, 22, nowTime);
-      for (int j = 0; j < 11; ++j)
+      if (m_iSendDataNum < m_strSendData.length())
       {
-        m_slSendData[m_iflag][14 + j] = nowTime[j];
+        QDateTime qtimeNowDate = QDateTime::currentDateTime();
+        QString strTime = qtimeNowDate.toString("hhmmss.zzzz");
+        //时间生成
+        char sTemSendData[100];
+        sprintf(sTemSendData, m_strSendData[m_iSendDataNum].toStdString().c_str(), strTime.toStdString().c_str(), "%s");
+        //校验和生成
+        char sSendData[100];
+        sprintf(sSendData, sTemSendData, creatSum(QString(sTemSendData)).c_str());
+
+        QString strSendData = sSendData;//*/
+
+        std::cout << strSendData.toStdString()<<'\n';
+
+        (*itr)->write(strSendData.toLatin1().data(), strSendData.length());
+        ++m_iSendDataNum;
       }
-      qDebug() << m_slSendData[m_iflag];
-      m_vSocketGroup[_index]->write(m_slSendData[m_iflag].toLatin1().data(), m_slSendData[m_iflag].length());
-      m_vSocketGroup[_index]->waitForBytesWritten(100);
-      ++m_iflag;
-    }
-    else
-    {
-      m_iflag = 0;
+      else
+      {
+        m_iSendDataNum = 0;
+      }
     }
   }
 }
 
+void uiSingleServerWidget::readDataFromTxt()
+{
+  m_sAddress = ui.lineEdit_Address->text().toStdString();
+
+  FILE* pFileData;
+  pFileData = fopen(m_sAddress.c_str(), "r");
+  if (!pFileData)
+    return;
+
+  char cWord = 0;
+  while (cWord != EOF)
+  {
+    cWord = getc(pFileData);
+    m_sSendDataGroup += cWord;
+  }
+
+  fclose(pFileData);
+}
+
+void uiSingleServerWidget::writeConfig()
+{
+  g_Settings.beginGroup(QString("Server") + QString::number(m_iWidgetID, 10));
+
+  g_Settings.setValue("Port", ui.spinBox_Port->value());
+  g_Settings.setValue("Timeout", ui.spinBox_Timeout->value());
+  g_Settings.setValue("Enable", ui.checkBox->isChecked() ? "True" : "False");
+  g_Settings.setValue("Address", ui.lineEdit_Address->text());
+
+  g_Settings.endGroup();
+}
+
+void uiSingleServerWidget::closeSocket()
+{
+  for (pSocketItr itr = m_vSocketGroup.begin(); itr != m_vSocketGroup.end(); )
+  {
+    if ((*itr)->isOpen())
+    {
+      (*itr)->close();
+      if (m_vSocketGroup.size() == 0)
+        break;
+      continue;
+    }
+    ++itr;
+  }
+}
+
+void uiSingleServerWidget::slotNewClient()
+{
+  QTcpSocket* pSocketTem = m_pTcpServer->nextPendingConnection();
+  m_vSocketGroup.push_back(pSocketTem);
+  /*异步执行，同步执行时在超时关闭的时，关闭socket调用slotDisconnection，erase了socket对象改变m_vSocketGroup回到closeSocket执行之后的代码，迭代器在
+  判断itr != m_vSocketGroup.end()时会崩溃*/
+  connect(pSocketTem, &QTcpSocket::disconnected, this, &uiSingleServerWidget::slotDisconnection, Qt::ConnectionType::QueuedConnection);
+  connect(pSocketTem, &QTcpSocket::disconnected, pSocketTem, &QTcpSocket::deleteLater);
+}
+
+void uiSingleServerWidget::slotDisconnection()
+{
+  QTcpSocket* pSocketTem = qobject_cast<QTcpSocket*>(sender());
+  for (pSocketItr itr = m_vSocketGroup.begin(); itr != m_vSocketGroup.end(); ++itr)
+  {
+    if ((*itr) == pSocketTem)
+    {
+      itr = m_vSocketGroup.erase(itr);
+      break;
+    }
+  }
+}
